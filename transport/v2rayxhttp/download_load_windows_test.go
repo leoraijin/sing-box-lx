@@ -45,6 +45,11 @@ func downloadPoolLimitError(client *Client) error {
 // This is a real persistent VLESS exchange, not repeated HTTP status checks.
 // Extended runs use NOVA_XHTTP_SOAK_SECONDS=300 (per mode) and go test -timeout=30m.
 func TestIndependentDownloadOfficialXrayConcurrent(t *testing.T) {
+	runIndependentDownloadOfficialXrayConcurrent(t, 2)
+}
+
+func runIndependentDownloadOfficialXrayConcurrent(t *testing.T, version int) {
+	t.Helper()
 	executable := os.Getenv("NOVA_XRAY_BINARY")
 	if executable == "" {
 		t.Skip("set NOVA_XRAY_BINARY to the pinned official Windows fixture")
@@ -75,7 +80,7 @@ func TestIndependentDownloadOfficialXrayConcurrent(t *testing.T) {
 				proxy.Transport = transport
 				t.Cleanup(transport.CloseIdleConnections)
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if !strings.HasPrefix(r.URL.Path, prefix) {
+					if r.ProtoMajor != downloadEndpointHTTPVersion(version) || !strings.HasPrefix(r.URL.Path, prefix) {
 						wrongLeg.Add(1)
 						http.Error(w, "wrong path", 400)
 						return
@@ -94,11 +99,15 @@ func TestIndependentDownloadOfficialXrayConcurrent(t *testing.T) {
 					proxy.ServeHTTP(w, r)
 				})
 			}
-			up, upTLS := downloadTestEndpoint(t, 2, front("/load-up/", true))
-			down, downTLS := downloadTestEndpoint(t, 2, front("/load-down/", false))
-			config, err := tls.NewClient(context.Background(), log.NewNOPFactory().Logger(), "localhost", *upTLS)
-			if err != nil {
-				t.Fatal(err)
+			up, upTLS := downloadTestEndpoint(t, version, front("/load-up/", true))
+			down, downTLS := downloadTestEndpoint(t, version, front("/load-down/", false))
+			var config tls.Config
+			if upTLS != nil {
+				var err error
+				config, err = tls.NewClient(context.Background(), log.NewNOPFactory().Logger(), "localhost", *upTLS)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			transport, err := NewClient(context.Background(), N.SystemDialer, up, option.V2RayXHTTPOptions{
 				Mode: mode, Path: "/load-up/", Xmux: &option.V2RayXHTTPXmuxOptions{MaxConcurrency: "3"},
@@ -213,7 +222,7 @@ func TestIndependentDownloadOfficialXrayConcurrent(t *testing.T) {
 				t.Fatalf("wrong legs up=%d down=%d wrong=%d", upRequests.Load(), downGets.Load(), wrongLeg.Load())
 			}
 			assertNoDownloadLeases(t, client)
-			t.Logf("persistent H2/H2 VLESS echo: duration=%s workers=%d peak=%d exchanges=%d bytes=%d", duration, workers, peak.Load(), exchanges.Load(), exchanges.Load()*16*1024)
+			t.Logf("persistent %s/%s VLESS echo: duration=%s workers=%d peak=%d exchanges=%d bytes=%d", downloadEndpointLabel(version), downloadEndpointLabel(version), duration, workers, peak.Load(), exchanges.Load(), exchanges.Load()*16*1024)
 		})
 	}
 }

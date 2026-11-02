@@ -97,6 +97,11 @@ func downloadRealityEndpoint(t *testing.T, handler http.Handler) (M.Socksaddr, *
 					t.Errorf("REALITY handshake identity/ALPN mismatch: %q %q", state.ServerName, state.NegotiatedProtocol)
 					return
 				}
+				// The deadline bounds the handshake, not the persistent stream lifetime.
+				if err := secure.SetDeadline(time.Time{}); err != nil {
+					t.Error(err)
+					return
+				}
 				server := &http2.Server{}
 				// The pinned uTLS REALITY server leaves clientProtocol empty.
 				// Verify HTTP/2 on parsed requests rather than inventing ALPN metadata.
